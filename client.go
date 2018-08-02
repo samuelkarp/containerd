@@ -280,6 +280,18 @@ type RemoteContext struct {
 	// manifests. If this option is false then any image which resolves
 	// to schema 1 will return an error since schema 1 is not supported.
 	ConvertSchema1 bool
+
+	// SkipLease indicates whether to skip creating a lease for a remote content
+	// store.  SkipLease should only be used when leases are unnecessary, like
+	// when there are no concurrent Pull or Fetch operations using the same
+	// content store.
+	SkipLease bool
+
+	// SkipImageBookkeeping indicates whether to skip image registration with
+	// the Image service.  SkipImageBookkeeping should only be used if you do
+	// not intend to take advantage of the Image service for subsequent
+	// operations.
+	SkipImageBookkeeping bool
 }
 
 func defaultRemoteContext() *RemoteContext {
@@ -305,11 +317,13 @@ func (c *Client) Fetch(ctx context.Context, ref string, opts ...RemoteOpt) (imag
 		return images.Image{}, errors.New("unpack on fetch not supported, try pull")
 	}
 
-	ctx, done, err := c.WithLease(ctx)
-	if err != nil {
-		return images.Image{}, err
+	if !fetchCtx.SkipLease {
+		ctx, done, err := c.WithLease(ctx)
+		if err != nil {
+			return images.Image{}, err
+		}
+		defer done(ctx)
 	}
-	defer done(ctx)
 
 	return c.fetch(ctx, fetchCtx, ref)
 }
@@ -330,11 +344,13 @@ func (c *Client) Pull(ctx context.Context, ref string, opts ...RemoteOpt) (Image
 		pullCtx.Platforms = []string{platforms.Default()}
 	}
 
-	ctx, done, err := c.WithLease(ctx)
-	if err != nil {
-		return nil, err
+	if !pullCtx.SkipLease {
+		ctx, done, err := c.WithLease(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer done(ctx)
 	}
-	defer done(ctx)
 
 	img, err := c.fetch(ctx, pullCtx, ref)
 	if err != nil {
@@ -401,6 +417,9 @@ func (c *Client) fetch(ctx context.Context, rCtx *RemoteContext, ref string) (im
 		Labels: rCtx.Labels,
 	}
 
+	if rCtx.SkipImageBookkeeping {
+		return img, nil
+	}
 	is := c.ImageService()
 	for {
 		if created, err := is.Create(ctx, img); err != nil {

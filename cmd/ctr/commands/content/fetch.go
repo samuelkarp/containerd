@@ -28,6 +28,7 @@ import (
 	"github.com/containerd/containerd"
 	"github.com/containerd/containerd/cmd/ctr/commands"
 	"github.com/containerd/containerd/content"
+	"github.com/containerd/containerd/content/local"
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/images"
 	"github.com/containerd/containerd/log"
@@ -66,17 +67,29 @@ Most of this is experimental and there are few leaps to make this work.`,
 			Name:  "all-platforms",
 			Usage: "pull content from all platforms",
 		},
+		cli.StringFlag{
+			Name:  "local-directory",
+			Usage: "pull content into a local directory rather than the daemon's content store",
+		},
 	),
 	Action: func(clicontext *cli.Context) error {
 		var (
-			ref = clicontext.Args().First()
+			ref  = clicontext.Args().First()
+			opts = []containerd.ClientOpt{}
 		)
-		client, ctx, cancel, err := commands.NewClient(clicontext)
+		if root := clicontext.String("local-directory"); root != "" {
+			clicontext.GlobalSet("address", "")
+			store, err := local.NewLabeledStore(root, local.NewMemoryLabelStore())
+			if err != nil {
+				return err
+			}
+			opts = append(opts, containerd.WithServices(containerd.WithContentStore(store)))
+		}
+		client, ctx, cancel, err := commands.NewClient(clicontext, opts...)
 		if err != nil {
 			return err
 		}
 		defer cancel()
-
 		_, err = Fetch(ctx, client, ref, clicontext)
 		return err
 	},
@@ -126,6 +139,14 @@ func Fetch(ctx context.Context, client *containerd.Client, ref string, cliContex
 		for _, platform := range p {
 			opts = append(opts, containerd.WithPlatform(platform))
 		}
+	}
+
+	if cliContext.IsSet("local-directory") {
+		opts = append(opts, func(client *containerd.Client, remoteContext *containerd.RemoteContext) error {
+			remoteContext.SkipLease = true
+			remoteContext.SkipImageBookkeeping = true
+			return nil
+		})
 	}
 
 	img, err := client.Fetch(pctx, ref, opts...)

@@ -29,7 +29,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
-	"sync"
 	"testing"
 	"time"
 
@@ -41,55 +40,9 @@ import (
 	"gotest.tools/assert"
 )
 
-type memoryLabelStore struct {
-	l      sync.Mutex
-	labels map[digest.Digest]map[string]string
-}
-
-func newMemoryLabelStore() LabelStore {
-	return &memoryLabelStore{
-		labels: map[digest.Digest]map[string]string{},
-	}
-}
-
-func (mls *memoryLabelStore) Get(d digest.Digest) (map[string]string, error) {
-	mls.l.Lock()
-	labels := mls.labels[d]
-	mls.l.Unlock()
-
-	return labels, nil
-}
-
-func (mls *memoryLabelStore) Set(d digest.Digest, labels map[string]string) error {
-	mls.l.Lock()
-	mls.labels[d] = labels
-	mls.l.Unlock()
-
-	return nil
-}
-
-func (mls *memoryLabelStore) Update(d digest.Digest, update map[string]string) (map[string]string, error) {
-	mls.l.Lock()
-	labels, ok := mls.labels[d]
-	if !ok {
-		labels = map[string]string{}
-	}
-	for k, v := range update {
-		if v == "" {
-			delete(labels, k)
-		} else {
-			labels[k] = v
-		}
-	}
-	mls.labels[d] = labels
-	mls.l.Unlock()
-
-	return labels, nil
-}
-
 func TestContent(t *testing.T) {
 	testsuite.ContentSuite(t, "fs", func(ctx context.Context, root string) (context.Context, content.Store, func() error, error) {
-		cs, err := NewLabeledStore(root, newMemoryLabelStore())
+		cs, err := NewLabeledStore(root, NewMemoryLabelStore())
 		if err != nil {
 			return nil, nil, nil, err
 		}

@@ -17,13 +17,11 @@ package containerd
 
 import (
 	"io/ioutil"
-	"sync"
 	"testing"
 
 	"github.com/containerd/containerd/content/local"
 	"github.com/containerd/containerd/platforms"
 	"github.com/containerd/containerd/sys"
-	digest "github.com/opencontainers/go-digest"
 )
 
 // TestImagePullNoDaemon tests that images can be pulled to a local content store without a running containerd daemon
@@ -35,7 +33,7 @@ func TestImagePullNoDaemon(t *testing.T) {
 	}
 	defer sys.ForceRemoveAll(root)
 
-	store, err := local.NewLabeledStore(root, newMemoryLabelStore())
+	store, err := local.NewLabeledStore(root, local.NewMemoryLabelStore())
 	if err != nil {
 		panic(err)
 	}
@@ -55,50 +53,4 @@ func TestImagePullNoDaemon(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-}
-
-type memoryLabelStore struct {
-	l      sync.Mutex
-	labels map[digest.Digest]map[string]string
-}
-
-func newMemoryLabelStore() local.LabelStore {
-	return &memoryLabelStore{
-		labels: map[digest.Digest]map[string]string{},
-	}
-}
-
-func (mls *memoryLabelStore) Get(d digest.Digest) (map[string]string, error) {
-	mls.l.Lock()
-	labels := mls.labels[d]
-	mls.l.Unlock()
-
-	return labels, nil
-}
-
-func (mls *memoryLabelStore) Set(d digest.Digest, labels map[string]string) error {
-	mls.l.Lock()
-	mls.labels[d] = labels
-	mls.l.Unlock()
-
-	return nil
-}
-
-func (mls *memoryLabelStore) Update(d digest.Digest, update map[string]string) (map[string]string, error) {
-	mls.l.Lock()
-	labels, ok := mls.labels[d]
-	if !ok {
-		labels = map[string]string{}
-	}
-	for k, v := range update {
-		if v == "" {
-			delete(labels, k)
-		} else {
-			labels[k] = v
-		}
-	}
-	mls.labels[d] = labels
-	mls.l.Unlock()
-
-	return labels, nil
 }

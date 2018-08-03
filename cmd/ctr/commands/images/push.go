@@ -26,6 +26,7 @@ import (
 	"github.com/containerd/containerd"
 	"github.com/containerd/containerd/cmd/ctr/commands"
 	"github.com/containerd/containerd/cmd/ctr/commands/content"
+	"github.com/containerd/containerd/content/local"
 	"github.com/containerd/containerd/images"
 	"github.com/containerd/containerd/log"
 	"github.com/containerd/containerd/pkg/progress"
@@ -58,17 +59,32 @@ var pushCommand = cli.Command{
 		Name:  "manifest-type",
 		Usage: "media type of manifest digest",
 		Value: ocispec.MediaTypeImageManifest,
+	}, cli.StringFlag{
+		Name:  "local-directory",
+		Usage: "push content from a local directory rather than the daemon's content store",
 	}),
 	Action: func(context *cli.Context) error {
 		var (
-			ref   = context.Args().First()
-			local = context.Args().Get(1)
-			desc  ocispec.Descriptor
+			ref      = context.Args().First()
+			localRef = context.Args().Get(1)
+			desc     ocispec.Descriptor
+			opts     = []containerd.ClientOpt{}
 		)
 		if ref == "" {
 			return errors.New("please provide a remote image reference to push")
 		}
-		client, ctx, cancel, err := commands.NewClient(context)
+		if root := context.String("local-directory"); root != "" {
+			if !context.IsSet("manifest") {
+				return errors.New("--manifest is required when setting --local-directory")
+			}
+			context.GlobalSet("address", "")
+			store, err := local.NewStore(root)
+			if err != nil {
+				return err
+			}
+			opts = append(opts, containerd.WithServices(containerd.WithContentStore(store)))
+		}
+		client, ctx, cancel, err := commands.NewClient(context, opts...)
 		if err != nil {
 			return err
 		}
@@ -80,10 +96,10 @@ var pushCommand = cli.Command{
 			}
 			desc.MediaType = context.String("manifest-type")
 		} else {
-			if local == "" {
-				local = ref
+			if localRef == "" {
+				localRef = ref
 			}
-			img, err := client.ImageService().Get(ctx, local)
+			img, err := client.ImageService().Get(ctx, localRef)
 			if err != nil {
 				return errors.Wrap(err, "unable to resolve image to manifest")
 			}

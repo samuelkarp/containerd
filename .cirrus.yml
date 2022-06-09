@@ -75,3 +75,20 @@ task:
 
   test_script: |
     vagrant ssh -- podman run --rm --privileged cri-in-userns
+
+task:
+  name: FreeBSD
+  freebsd_instance:
+    image_family: freebsd-13-0
+    cpu: 2
+    memory: 8G
+  go_modules_cache:
+    folder: .gomodcache
+  setup_script:
+    - pkg install -y git-lite go golangci-lint gmake
+    - go env -w GOMODCACHE=$(pwd)/.gomodcache
+    - go mod download
+  build_script:
+    - gmake
+  test_script:
+    - gmake test

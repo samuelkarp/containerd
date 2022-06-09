@@ -8,87 +8,26 @@
 # - The number of CPUs should be multiple of 2.
 
 task:
-  name: Vagrant
-
-  compute_engine_instance:
-    image_project: cirrus-images
-    image: family/docker-kvm
-    platform: linux
-    nested_virtualization: true
-    cpu: 2
-    memory: 8G
-
-  env:
-    GOTEST: gotestsum --
-    # By default, Cirrus CI doesn't have HOME defined
-    HOME: /root
-    matrix:
-      BOX: fedora/36-cloud-base
-      BOX: rockylinux/8
-  install_libvirt_vagrant_script: |
-    apt-get update
-    apt-get install -y libvirt-daemon libvirt-daemon-system vagrant vagrant-libvirt
-    systemctl enable --now libvirtd
-
-  vagrant_cache:
-    folder: /root/.vagrant.d
-    fingerprint_script: uname --kernel-release --kernel-version && cat Vagrantfile
-
-  vagrant_up_script: |
-    vagrant up --no-tty
-
-  integration_script: |
-    vagrant up --provision-with=selinux,install-runc,install-gotestsum,test-integration
-
-  cri_test_script: |
-    vagrant up --provision-with=selinux,install-runc,install-gotestsum,test-cri
-
-task:
-  name: CGroupsV2 - rootless CRI test
-
-  env:
-    HOME: /root
-
-  compute_engine_instance:
-    image_project: cirrus-images
-    image: family/docker-kvm
-    platform: linux
-    nested_virtualization: true
-    cpu: 2
-    memory: 8G
-
-  install_libvirt_vagrant_script: |
-    apt-get update
-    apt-get install -y libvirt-daemon libvirt-daemon-system vagrant vagrant-libvirt
-    systemctl enable --now libvirtd
-
-  vagrant_cache:
-    folder: /root/.vagrant.d
-    fingerprint_script: uname -a; cat Vagrantfile
-
-  vagrant_up_script: |
-    vagrant up --provision-with=install-rootless-podman --no-tty
-
-  podman_build_script: |
-    # Execute rootless podman to create the UserNS env
-    vagrant ssh -- podman build --target cri-in-userns -t cri-in-userns -f /vagrant/contrib/Dockerfile.test /vagrant
-
-  test_script: |
-    vagrant ssh -- podman run --rm --privileged cri-in-userns
-
-task:
   name: FreeBSD
-  freebsd_instance:
-    image_family: freebsd-13-0
+  compute_engine_instance:
+    image_project: freebsd-org-cloud-dev
+    image: family/freebsd-13-1
+    platform: freebsd
     cpu: 2
     memory: 8G
   go_modules_cache:
     folder: .gomodcache
+    fingerprint_script: cat go.mod go.sum
   setup_script:
     - pkg install -y git-lite go golangci-lint gmake
     - go env -w GOMODCACHE=$(pwd)/.gomodcache
     - go mod download
+    - env
+    - which tar
+    - tar --version
+    - mount #ufs?
   build_script:
-    - gmake
+    - #gmake
+    - true
   test_script:
     - gmake test

@@ -963,8 +963,10 @@ func TestDiffTar(t *testing.T) {
 		b          fstest.Applier
 	}{
 		{
-			name:       "EmptyDiff",
-			validators: []tarEntryValidator{},
+			name: "EmptyDiff",
+			validators: []tarEntryValidator{
+				dirEntry("etc/", 0755),
+			},
 			a: fstest.Apply(
 				fstest.CreateDir("/etc/", 0755),
 			),

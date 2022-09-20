@@ -14,6 +14,8 @@
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
 
+echo "utils.sh: Sandboxes: ${ENABLE_CRI_SANDBOXES}"
+
 IS_WINDOWS=0
 if [ -v "OS" ] && [ "${OS}" == "Windows_NT" ]; then
   IS_WINDOWS=1
@@ -160,6 +162,7 @@ fi
 # to the state and root folders. This allows us to use paths that have spaces
 # in them without erring out.
 run_containerd() {
+  echo "run_containerd: Sandboxes: ${ENABLE_CRI_SANDBOXES}"
   # not used on linux
   if [ $# -gt 0 ]; then
     local report_dir=$1
@@ -168,7 +171,11 @@ run_containerd() {
   if [ ! -z "${sudo}" ]; then
     CMD+="${sudo} "
   fi
+  if [ -n  "${ENABLE_CRI_SANDBOXES}" ]; then
+    CMD+="ENABLE_CRI_SANDBOXES='${ENABLE_CRI_SANDBOXES}' "
+  fi
   CMD+="${PWD}/bin/containerd"
+  echo "run_containerd: ${CMD}"
 
   if [ $IS_WINDOWS -eq 0 ]; then
     $CMD --log-level=debug \

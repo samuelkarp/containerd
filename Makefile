@@ -220,6 +220,7 @@ bin/cri-integration.test:
 
 cri-integration: binaries bin/cri-integration.test ## run cri integration tests (example: FOCUS=TestContainerListStats make cri-integration)
 	@echo "$(WHALE) $@"
+	echo "Sandboxes: ${ENABLE_CRI_SANDBOXES}"
 	@bash -x ./script/test/cri-integration.sh
 	@rm -rf bin/cri-integration.test
 

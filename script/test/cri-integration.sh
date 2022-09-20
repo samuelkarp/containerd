@@ -18,6 +18,8 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
+echo "cri-integration.sh: Sandboxes: ${ENABLE_CRI_SANDBOXES}"
+
 basedir="$(dirname "${BASH_SOURCE[0]}")"
 source "${basedir}/utils.sh"
 
@@ -34,6 +36,7 @@ if [ $IS_WINDOWS -eq 0 ]; then
 else
   REPORT_DIR=${REPORT_DIR:-"C:/Windows/Temp/test-integration"}
 fi
+
 # RUNTIME is the runtime handler to use in the test.
 RUNTIME=${RUNTIME:-""}
 

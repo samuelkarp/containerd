@@ -18,6 +18,8 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
+echo "cri-integration.sh: Sandboxes: ${ENABLE_CRI_SANDBOXES}"
+
 basedir="$(dirname "${BASH_SOURCE[0]}")"
 source "${basedir}/utils.sh"
 
@@ -34,6 +36,11 @@ if [ $IS_WINDOWS -eq 0 ]; then
 else
   REPORT_DIR=${REPORT_DIR:-"C:/Windows/Temp/test-integration"}
 fi
+
+printlog() {
+  cat "$REPORT_DIR/containerd.log"
+}
+trap printlog EXIT
 # RUNTIME is the runtime handler to use in the test.
 RUNTIME=${RUNTIME:-""}
 
@@ -50,6 +57,6 @@ ${sudo} bin/cri-integration.test --test.run="${FOCUS}" --test.v \
   --image-list="${TEST_IMAGE_LIST:-}" && test_exit_code=$? || test_exit_code=$?
 
 #test $test_exit_code -ne 0 && \
-  cat "$REPORT_DIR/containerd.log"
+  #cat "$REPORT_DIR/containerd.log"
 
 exit ${test_exit_code}

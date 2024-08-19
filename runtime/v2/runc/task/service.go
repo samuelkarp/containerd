@@ -27,6 +27,12 @@ import (
 	"github.com/containerd/cgroups/v3"
 	"github.com/containerd/cgroups/v3/cgroup1"
 	cgroupsv2 "github.com/containerd/cgroups/v3/cgroup2"
+	runcC "github.com/containerd/go-runc"
+	"github.com/containerd/log"
+	"github.com/containerd/ttrpc"
+	"github.com/containerd/typeurl/v2"
+	"github.com/sirupsen/logrus"
+
 	eventstypes "github.com/containerd/containerd/api/events"
 	taskAPI "github.com/containerd/containerd/api/runtime/task/v2"
 	"github.com/containerd/containerd/api/types/task"
@@ -45,10 +51,6 @@ import (
 	"github.com/containerd/containerd/runtime/v2/runc/options"
 	"github.com/containerd/containerd/runtime/v2/shim"
 	"github.com/containerd/containerd/sys/reaper"
-	runcC "github.com/containerd/go-runc"
-	"github.com/containerd/ttrpc"
-	"github.com/containerd/typeurl/v2"
-	"github.com/sirupsen/logrus"
 )
 
 var (
@@ -171,6 +173,7 @@ func (s *service) preStart(c *runc.Container) (handleStarted func(*runc.Containe
 		if p != nil {
 			pid = p.Pid()
 		}
+		log.G(s.context).WithField("pid", pid).WithField("container", c.ID).Debug("handleStarted")
 
 		_, init := p.(*process.Init)
 		s.lifecycleMu.Lock()
@@ -183,6 +186,7 @@ func (s *service) preStart(c *runc.Container) (handleStarted func(*runc.Containe
 			initPid := c.Pid()
 			iExits, initExited := exits[initPid]
 			if initExited && s.pendingExecs[c] == 0 {
+				log.G(s.context).WithField("pid", pid).WithField("container", c.ID).Debug("handleStarted, last pending exec")
 				// c's init process has exited before handleStarted was called and
 				// this is the last pending exec process start - we need to process
 				// the exit for the init process after processing this exec, so:
@@ -197,6 +201,7 @@ func (s *service) preStart(c *runc.Container) (handleStarted func(*runc.Containe
 				var skipped []containerProcess
 				for _, initPidCp := range s.running[initPid] {
 					if initPidCp.Container == c {
+						log.G(s.context).WithField("pid", pid).WithField("container", c.ID).Debug("handleStarted: has init exits for container")
 						initCps = append(initCps, initPidCp)
 					} else {
 						skipped = append(skipped, initPidCp)
@@ -214,16 +219,19 @@ func (s *service) preStart(c *runc.Container) (handleStarted func(*runc.Containe
 		delete(s.exitSubscribers, &exits)
 		exits = nil
 		if pid == 0 || exited {
+			log.G(s.context).WithField("pid", pid).WithField("container", c.ID).Debug("handleStarted: failed to start")
 			s.lifecycleMu.Unlock()
 			for _, ee := range ees {
 				s.handleProcessExit(ee, c, p)
 			}
 			for _, eee := range initExits {
 				for _, cp := range initCps {
+					log.G(s.context).WithField("pid", pid).WithField("container", c.ID).WithField("eee", eee).WithField("cp", cp.Container.ID).Debug("handleStarted: sending skipped exit")
 					s.handleProcessExit(eee, cp.Container, cp.Process)
 				}
 			}
 		} else {
+			log.G(s.context).WithField("pid", pid).WithField("container", c.ID).Debug("handleStarted: successfully started")
 			// Process start was successful, add to `s.running`.
 			s.running[pid] = append(s.running[pid], containerProcess{
 				Container: c,
@@ -303,6 +311,7 @@ func (s *service) Start(ctx context.Context, r *taskAPI.StartRequest) (*taskAPI.
 	if r.ExecID == "" {
 		cinit = container
 	} else {
+		log.G(s.context).WithField("container", container.ID).WithField("exec", r.ExecID).Debug("Start: Add exec for container")
 		s.pendingExecs[container]++
 	}
 	handleStarted, cleanup := s.preStart(cinit)
@@ -683,6 +692,7 @@ func (s *service) processExits() {
 				// order to ensure order between execs and the init process for a given
 				// container, skip processing this exit here and let the `handleStarted`
 				// closure for the pending exec publish it.
+				log.G(s.context).WithField("pid", e.Pid).WithField("container", cp.Container.ID).Debug("processExits: skipping exit")
 				skipped = append(skipped, cp)
 			} else {
 				cps = append(cps, cp)
@@ -707,6 +717,7 @@ func (s *service) send(evt interface{}) {
 
 // s.mu must be locked when calling handleProcessExit
 func (s *service) handleProcessExit(e runcC.Exit, c *runc.Container, p process.Process) {
+	log.G(s.context).WithField("pid", e.Pid).WithField("container", c.ID).Debug("handleProcessExit")
 	if ip, ok := p.(*process.Init); ok {
 		// Ensure all children are killed
 		if runc.ShouldKillAllOnExit(s.context, c.Bundle) {
@@ -717,6 +728,7 @@ func (s *service) handleProcessExit(e runcC.Exit, c *runc.Container, p process.P
 		}
 	}
 
+	log.G(s.context).WithField("pid", e.Pid).WithField("container", c.ID).WithField("status", e.Status).Debug("handleProcessExit: set exit status")
 	p.SetExited(e.Status)
 	s.send(&eventstypes.TaskExit{
 		ContainerID: c.ID,

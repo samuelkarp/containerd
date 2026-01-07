@@ -1,0 +1,158 @@
+name: Cherry-pick backports
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  cherry-pick:
+    runs-on: ubuntu-latest
+    if: github.event.issue.pull_request && startsWith(github.event.comment.body, '/cherry-pick')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Fetch all history for cherry-pick
+
+      - name: Extract Cherry-pick Target Branch
+        id: extract_branch
+        run: |
+          COMMENT_BODY="${{ github.event.comment.body }}"
+          TARGET_BRANCH=$(echo "$COMMENT_BODY" | sed -n 's/^\/cherry-pick[[:space:]]\+\(\S\+\).*/\1/p')
+          echo "Target branch: $TARGET_BRANCH"
+          if [ -z "$TARGET_BRANCH" ]; then
+            echo "::error::Target branch not specified in '/cherry-pick' command."
+            exit 1
+          fi
+          echo "target_branch=$TARGET_BRANCH" >> "$GITHUB_OUTPUT"
+
+      - name: Validate User and PR Merged Status
+        id: validate_pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER="${{ github.event.issue.number }}"
+          COMMENTER="${{ github.actor }}"
+          # Define allowlisted users (can be passed as a workflow input or secret)
+          ALLOWLISTED_USERS="samuelkarp dependabot[bot]" # Placeholder allowlist
+          if [[ ! " ${ALLOWLISTED_USERS} " =~ " ${COMMENTER} " ]]; then
+            echo "::error::User '${COMMENTER}' is not authorized to trigger cherry-pick."
+            exit 1
+          fi
+
+          PR_INFO=$(gh pr view "$PR_NUMBER" --json state,title --jq '. | {state: .state, title: .title}')
+          PR_STATE=$(echo "$PR_INFO" | jq -r '.state')
+          PR_TITLE=$(echo "$PR_INFO" | jq -r '.title')
+
+          echo "PR #$PR_NUMBER state: $PR_STATE, title: $PR_TITLE"
+
+          if [ "$PR_STATE" != "MERGED" ]; then
+            echo "::error::Pull request #$PR_NUMBER is not merged. Current state: $PR_STATE"
+            exit 1
+          fi
+          echo "pr_title=$PR_TITLE" >> "$GITHUB_OUTPUT"
+
+      - name: Perform Cherry-pick
+        id: cherry_pick
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_BRANCH: ${{ steps.extract_branch.outputs.target_branch }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git fetch origin "$TARGET_BRANCH"
+
+          CHERRY_PICK_BRANCH="cherry-pick-pr-${PR_NUMBER}-to-${TARGET_BRANCH}"
+          git checkout -b "$CHERRY_PICK_BRANCH" "origin/$TARGET_BRANCH"
+
+          # Get the list of commit SHAs from the PR
+          COMMIT_SHAS=$(gh pr view "$PR_NUMBER" --json commits --jq '.commits[].oid')
+
+          for COMMIT_SHA in $COMMIT_SHAS; do
+            echo "Cherry-picking commit: $COMMIT_SHA"
+            if ! git cherry-pick -x "$COMMIT_SHA"; then
+              echo "::error::Failed to cherry-pick commit ${COMMIT_SHA}."
+              git cherry-pick --abort || true
+              exit 1
+            fi
+          done
+
+          echo "cherry_pick_branch=$CHERRY_PICK_BRANCH" >> "$GITHUB_OUTPUT"
+
+      - name: Push cherry-pick branch
+        run: |
+          git push origin ${{ steps.cherry_pick.outputs.cherry_pick_branch }}
+
+      - name: Create Pull Request
+        id: create_pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          TARGET_BRANCH: ${{ steps.extract_branch.outputs.target_branch }}
+          CHERRY_PICK_BRANCH: ${{ steps.cherry_pick.outputs.cherry_pick_branch }}
+          PR_ORIGINAL_TITLE: ${{ steps.validate_pr.outputs.pr_title }}
+        run: |
+          PR_TITLE="[${TARGET_BRANCH}] ${PR_ORIGINAL_TITLE}"
+
+          BODY_FILE=$(mktemp)
+          cat <<EOF > "$BODY_FILE"
+          Cherry-picking #${PR_NUMBER} to branch ${TARGET_BRANCH}.
+
+          Original PR: ${{ github.event.issue.html_url }}
+          EOF
+
+          CREATED_PR_URL=$(gh pr create \
+            --title "$PR_TITLE" \
+            --body-file "$BODY_FILE" \
+            --base "$TARGET_BRANCH" \
+            --head "$CHERRY_PICK_BRANCH" \
+            --repo "${{ github.repository }}")
+
+          rm "$BODY_FILE"
+
+          echo "Created PR: $CREATED_PR_URL"
+          echo "created_pr_url=$CREATED_PR_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Comment on original PR (success)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          CREATED_PR_URL: ${{ steps.create_pr.outputs.created_pr_url }}
+        if: success() && steps.create_pr.outputs.created_pr_url != ''
+        run: |
+          gh pr comment "$PR_NUMBER" \
+            --body "Cherry-pick successful! A new PR has been created: ${{ steps.create_pr.outputs.created_pr_url }}"
+
+      - name: Report Failure
+        if: failure()
+        id: failure_reason
+        run: |
+          ERROR_MESSAGE=""
+          if [ "${{ steps.extract_branch.outcome }}" == "failure" ]; then
+            ERROR_MESSAGE="Failed to extract target branch from comment. Please use the format: \`/cherry-pick <branch>\`"
+          elif [ "${{ steps.validate_pr.outcome }}" == "failure" ]; then
+            ERROR_MESSAGE="Validation failed. The user '${{ github.actor }}' may not be authorized, or the PR may not be in a merged state."
+          elif [ "${{ steps.cherry_pick.outcome }}" == "failure" ]; then
+            ERROR_MESSAGE="The cherry-pick failed. This is usually due to a conflict between the PR's changes and the target branch. Please check the workflow logs for more details."
+          elif [ "${{ steps.create_pr.outcome }}" == "failure" ]; then
+            ERROR_MESSAGE="Failed to create the pull request. Please check the workflow logs for more details."
+          else
+            ERROR_MESSAGE="An unknown error occurred. Please check the workflow logs for more details."
+          fi
+          echo "error_message=$ERROR_MESSAGE" >> "$GITHUB_OUTPUT"
+
+      - name: Comment on original PR (failure)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+        if: failure()
+        run: |
+          gh pr comment "$PR_NUMBER" \
+            --body "Cherry-pick failed: ${{ steps.failure_reason.outputs.error_message }}"
